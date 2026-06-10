@@ -1,76 +1,103 @@
-[![Deploy this example with Pulumi](https://www.pulumi.com/images/deploy-with-pulumi/dark.svg)](https://app.pulumi.com/new?template=https://github.com/pulumi/examples/blob/master/kubernetes-ts-guestbook/simple/README.md#gh-light-mode-only)
-[![Deploy this example with Pulumi](https://get.pulumi.com/new/button-light.svg)](https://app.pulumi.com/new?template=https://github.com/pulumi/examples/blob/master/kubernetes-ts-guestbook/simple/README.md#gh-dark-mode-only)
+# 🚀 Pulumi Kubernetes Guestbook with Advanced Monitoring Suite
 
-# Kubernetes Guestbook (Simple Variant)
+This repository extends the original Pulumi TypeScript Guestbook application by integrating native cluster-wide and application-level monitoring using the Prometheus Operator (`kube-prometheus-stack`) and Grafana Dashboards.
 
-A version of the [Kubernetes Guestbook](https://kubernetes.io/docs/tutorials/stateless-application/guestbook/)
-application using Pulumi.
+![Guestbook Grafana Dashboard](imgs/grafana.jpg)
 
-This is a straight port of the original YAML, and doesn't highlight advantages of using real languages. For an example
-using abstraction to cut down on boilerplate, please see the [variant using components](../components),
-also in this repo. It provisions the same set of resources.
+---
 
-## Running the App
+## 🛠️ Architectural Design Decisions & Code Modifications
 
-Follow the steps in [Pulumi Installation](https://www.pulumi.com/docs/get-started/install/) and [Kubernetes Setup](https://www.pulumi.com/docs/intro/cloud-providers/kubernetes/setup/) to get Pulumi working with Kubernetes.
+As a Senior SRE practice, the codebase inside `index.ts` was refactored and extended based on the following engineering validations:
 
-Install dependencies:
+### 1. The Sidecar Pattern for Application Instrumentation
+* **The Challenge:** Black-box testing via `curl` revealed that the legacy PHP/Apache frontend and Redis instances do not expose native Prometheus `/metrics` endpoints.
+* **The Solution:** Implemented the **Sidecar Pattern** inside the Deployment specs without altering the developers' original source code. 
+  - Added a `lusotycoon/apache-exporter` container to the frontend Pod, translating internal Apache server status data via `localhost`.
+  - Added an `oliver006/redis_exporter` container to both Redis Leader and Replica Pods, translating internal database health via `localhost`.
 
-```sh
-npm install
+### 2. Service Metadata Corrections (Target Labels)
+* **The Modification:** The original Pulumi example lacked explicit service-level metadata labels for the frontend. Explicit `labels: { app: "..." }` and explicit port naming (`name: "metrics-port"`) were injected into the `k8s.core.v1.Service` resources.
+* **The Reason:** This ensures that the Prometheus Operator can discover the networking endpoints dynamically.
+
+### 3. Native ServiceMonitor CRDs with Namespace Selection
+* **The Modification:** Declared `k8s.apiextensions.CustomResource` blocks for `frontend-monitor`, `redis-leader-monitor`, and `redis-replica-monitor`.
+* **The Reason:** Instead of legacy annotations, modern Prometheus Operators rely on `ServiceMonitor` Custom Resources. The property `namespaceSelector: { matchNames: ["default"] }` was explicitly added to allow the monitoring stack (running in the `monitoring` namespace) to scrape endpoints across isolation boundaries.
+
+---
+
+## 📥 Deployment Instructions
+
+### Prerequisites
+- Windows 11 with **Podman Desktop** and a local **Kind Cluster** running.
+- Pulumi CLI and Node.js/NPM installed.
+- Helm CLI installed.
+
+### Step-by-Step Execution
+
+1. **Add the Required Helm Repository (Mandatory Upstream Dependency):**
+   Before running Pulumi, ensure your local Helm package manager has access to the official Prometheus community charts by executing:
+   ```bash
+   helm repo add prometheus-community https://prometheus-community.github.io/helm-charts
+   helm repo update
+   ```
+2. Navigate to the project directory containing the `index.ts` file:
+   ```bash
+   cd examples/kubernetes-ts-guestbook/simple
+   ```
+3. Install the required Pulumi and Kubernetes dependency trees:
+   ```bash
+   npm install @pulumi/kubernetes @pulumi/pulumi
+   ```
+4. Initialize a local Pulumi State backend (avoids cloud authentication):
+   ```bash
+   pulumi login --local
+   pulumi stack init dev
+   ```
+5. Set the target environment configuration for local architecture:
+   ```bash
+   pulumi config set isMinikube true
+   ```
+6. Deploy the unified stack (Application + Observability Matrix):
+   ```bash
+   pulumi up --yes
+   ```
+
+---
+
+## 🔐 Telemetry Verification & Access Details (Submission Checklist)
+
+### 1. How to verify that Guestbook metrics are being scraped by Prometheus
+To verify that Prometheus is actively pulling metrics from the injected sidecars across the namespace boundary, establish a local proxy connection:
+```bash
+kubectl -n monitoring port-forward svc/monitoring-stack-kube-prom-prometheus 9090:9090
 ```
+Navigate to **`http://localhost:9090/targets`** (Status ➔ Target health) in your browser. You will observe that the following endpoints are completely discovered, attached to the correct ports, and in a healthy **`UP`** state:
+- `serviceMonitor/monitoring/frontend-monitor/0` (3/3 active targets)
+- `serviceMonitor/monitoring/redis-leader-monitor/0` (1/1 active targets)
+- `serviceMonitor/monitoring/redis-replica-monitor/0` (1/1 active targets)
 
-Create a new stack:
-
-```sh
-$ pulumi stack init
-Enter a stack name: testbook
+### 2. Grafana Access URL and Admin Credentials
+Establish a secure proxy to the Grafana visualization server:
+```bash
+kubectl port-forward svc/monitoring-stack-kube-prometheus-stack-grafana 3000:80 -n monitoring
 ```
+- **Grafana Access URL:** [http://localhost:3000](http://localhost:3000)
+- **Default Username:** `admin`
+- **Default Password:** `AdminPassword123*`
 
-This example will attempt to expose the Guestbook application to the Internet with a `Service` of
-type `LoadBalancer`. Since minikube does not support `LoadBalancer`, the Guestbook application
-already knows to use type `ClusterIP` instead; all you need to do is to tell it whether you're
-deploying to minikube:
+### 3. Custom Performance Dashboard (Stretch Goal)
+A custom Dashboard named **`GuestBook`** has been built inside Grafana to expose the metrics requested in the assignment using the following optimized PromQL expressions:
 
-```sh
-pulumi config set isMinikube <value>
-```
-
-Perform the deployment:
-
-```sh
-$ pulumi up
-Updating stack 'testbook'
-Performing changes:
-
-     Type                           Name                Status      Info
- +   pulumi:pulumi:Stack            guestbook-testbook  created
- +   ├─ kubernetes:apps:Deployment  redis-leader        created
- +   ├─ kubernetes:apps:Deployment  frontend            created
- +   ├─ kubernetes:apps:Deployment  redis-replica       created
- +   ├─ kubernetes:core:Service     redis-leader        created     1 info message
- +   ├─ kubernetes:core:Service     redis-replica       created     1 info message
- +   └─ kubernetes:core:Service     frontend            created     2 info messages
-
----outputs:---
-frontendIp: "35.232.147.18"
-
-info: 7 changes performed:
-    + 7 resources created
-Update duration: 40.829381902s
-
-Permalink: https://app.pulumi.com/hausdorff/testbook/updates/1
-```
-
-And finally - open the application in your browser to see the running application. If you're running
-macOS you can simply run:
-
-```sh
-open $(pulumi stack output frontendIp)
-```
-
-> _Note_: minikube does not support type `LoadBalancer`; if you are deploying to minikube, make sure
-> to run `kubectl port-forward svc/frontend 8080:80` to forward the cluster port to the local
-> machine and access the service via `localhost:8080`.
-
-![Guestbook in browser](./imgs/guestbook.png)
+* **Frontend Service - HTTP Request Rate:** 
+  `rate(apache_accesses_total{namespace="default"}[5m])`
+  *Converts the cumulative connection counter into an instantaneous requests-per-second metric per pod.*
+* **Frontend Service - CPU Resource Usage:** 
+  `rate(container_cpu_usage_seconds_total{container="frontend"}[5m])`
+  *Translates cumulative CPU execution time from cAdvisor into live core consumption.*
+* **Backend Service - Redis Commands Processed:** 
+  `rate(redis_commands_processed_total{namespace="default"}[5m])`
+  *Tracks transaction velocity (operations/sec) across database states.*
+* **Backend Service - Database Memory Utilization:** 
+  `redis_memory_used_bytes`
+  *A Gauge-type metric monitoring real-time RAM allocation in bytes.*
