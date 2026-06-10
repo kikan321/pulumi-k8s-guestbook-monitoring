@@ -8,7 +8,7 @@ This repository extends the original Pulumi TypeScript Guestbook application by 
 
 ## 🛠️ Architectural Design Decisions & Code Modifications
 
-As a Senior SRE practice, the codebase inside `index.ts` was refactored and extended based on the following engineering validations:
+The codebase inside `index.ts` was refactored and extended based on the following engineering validations:
 
 ### 1. The Sidecar Pattern for Application Instrumentation
 * **The Challenge:** Black-box testing via `curl` revealed that the legacy PHP/Apache frontend and Redis instances do not expose native Prometheus `/metrics` endpoints.
