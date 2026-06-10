@@ -8,6 +8,57 @@ This repository extends the original Pulumi TypeScript Guestbook application by 
 
 ## 🛠️ Architectural Design Decisions & Code Modifications
 
+## 📊 Data Collection Architecture & Flow
+
+To bridge the gap between legacy components and modern cloud-native observability, the architecture handles metrics collection at two distinct layers: **Application/Software Telemetry** (via localhost sidecars) and **Infrastructure/Resource Usage** (via cgroups).
+
+```text
+┌────────────────────────────────────────────────────────────────────────────────────────┐
+│ KUBERNETES POD BOUNDARY                                                                │
+│                                                                                        │
+│  ┌───────────────────────┐   Internal HTTP   ┌───────────────────────────┐             │
+│  │ APPLICATION CONTAINER │  (localhost:80)   │     SIDECAR CONTAINER     │             │
+│  │    (Apache/PHP App)   ├──────────────────►│     (apache-exporter)     │             │
+│  │   /server-status?auto │                   │  Exposes /metrics (:9117) │             │
+│  └───────────────────────┘                   └─────────────┬─────────────┘             │
+│                                                            ▲                           │
+└────────────────────────────────────────────────────────────┼───────────────────────────┘
+                                                             │ Scrape Endpoint
+                                                             │
+                  ┌──────────────────────────────────────────┴──────────────┐            │
+                  │              PROMETHEUS CORE ENGINE                     │            │
+                  └──────────────────────────┬──────────────────────────────┘            │
+                                             │                                           │
+                                             │ Pulls Kernel Metrics                      │
+                                             ▼                                           │
+┌────────────────────────────────────────────────────────────────────────────────────────┘
+│ NODE / KUBELET LEVEL                                                                   │
+│                                                                                        │
+│  ┌───────────────────────┐                                                             │
+│  │   OS KERNEL CGROUPS   │◄───────────────── [ cAdvisor Agent ]                        │
+│  │ (CPU/Memory isolation)│                  (Reads physical runtime container usage)   │
+│  └───────────────────────┘                                                             │
+└────────────────────────────────────────────────────────────────────────────────────────┘
+```
+
+### 1. Application-Level Metrics (Traffic & Request Rates)
+- **Mechanism:** Containers inside the same Pod share the same network namespace and can communicate freely via `localhost`.
+- **Flow:** The `apache-exporter` sidecar periodically queries the application's internal URL `http://localhost:80/server-status?auto`. It parses Apache's raw plaintext status into Prometheus-compatible metrics and exposes them at the `:9117/metrics` endpoint. The same local mechanism applies to Redis, where the `redis-exporter` connects to `localhost:6379` using the `INFO` database command [0.2].
+- **Scraping:** Prometheus uses the declared `ServiceMonitor` to locate the pod's IP at port `9117` or `9121` and pulls the translated software metrics [0.2].
+
+### 2. Infrastructure-Level Metrics (Resource Usage)
+- **Mechanism:** Real hardware utilization (CPU and Memory) is managed and isolated by the Linux kernel using **cgroups (control groups)**.
+- **Flow:** When the Helm chart `kube-prometheus-stack` is installed, it ensures telemetry collection from **cAdvisor** (embedded directly within the Kubelet on every node). 
+- **Scraping:** `cAdvisor` monitors the cgroups definitions from the outside, capturing the exact physical clock cycles and memory footprints of the Guestbook containers. Prometheus scrapes these infrastructure providers directly. The application containers are completely unaware of this operation, ensuring zero runtime overhead for instrumentation.
+
+
+
+
+
+
+
+
+
 The codebase inside `index.ts` was refactored and extended based on the following engineering validations:
 
 ### 1. The Sidecar Pattern for Application Instrumentation
