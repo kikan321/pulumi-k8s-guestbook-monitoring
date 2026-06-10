@@ -12,10 +12,6 @@ This repository extends the original Pulumi TypeScript Guestbook application by 
 
 To bridge the gap between legacy components and modern cloud-native observability, the architecture handles metrics collection at two distinct layers: **Application/Software Telemetry** (via localhost sidecars) and **Infrastructure/Resource Usage** (via cgroups).
 
-## 📊 Data Collection Architecture & Flow
-
-To bridge the gap between legacy components and modern cloud-native observability, the architecture handles metrics collection at two distinct layers: **Application/Software Telemetry** (via localhost sidecars) and **Infrastructure/Resource Usage** (via cgroups).
-
 ```text
 ┌────────────────────────────────────────────────────────────────────────────────────────┐
 │ KUBERNETES POD BOUNDARY                                                                │
